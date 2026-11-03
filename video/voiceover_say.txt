@@ -1,0 +1,10 @@
+Your home has walls. [[slnc 220]] Locks. [[slnc 220]] Cameras that only watch. [[slnc 360]]
+This doesn't just watch. [[slnc 380]]
+It patrols. [[slnc 360]]
+It knows who belongs, [[slnc 220]] and who doesn't. [[slnc 360]]
+An unknown face at the perimeter. [[slnc 250]] Detected. [[slnc 160]] Locked. [[slnc 160]] Followed. [[slnc 380]]
+Wherever they run, [[slnc 120]] it follows. [[slnc 250]] Every step, [[slnc 80]] recorded. [[slnc 160]] Every second, [[slnc 80]] logged. [[slnc 380]]
+You're alerted [[slnc 80]] before they reach the door. [[slnc 360]]
+No guard. [[slnc 160]] No pilot. [[slnc 160]] No blind spots. [[slnc 360]]
+Defense. [[slnc 160]] Automated. [[slnc 360]]
+Sentinel O S. [[slnc 130]] Online.

@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #05070b; color: #d8dee9;
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  canvas { display: block; }
+  #panel { position: absolute; top: 12px; left: 12px; max-width: min(280px, calc(100vw - 48px));
+    padding: 10px 12px; background: rgba(12, 16, 22, 0.82); border: 1px solid #1d2430; border-radius: 8px; }
+  h1 { margin: 0 0 6px; font-size: 14px; font-weight: 600; }
+  dl { margin: 0 0 8px; display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; }
+  dt { color: #8a94a6; }
+  dd { margin: 0; }
+  .legend { display: flex; gap: 14px; }
+  .key::before { content: ""; display: inline-block; width: 14px; height: 3px; margin: 0 6px 3px 0; background: var(--c); }
+  #bar { height: 8px; margin-top: 8px; border-radius: 2px; }
+  .ticks { display: flex; justify-content: space-between; color: #8a94a6; font-size: 11px; }
+  .toggles { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; }
+  #hint { position: absolute; right: 12px; bottom: 10px; color: #5d6676; font-size: 11px; }
+  #fail { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; text-align: center; }
+  [hidden] { display: none !important; }
+</style>
+<!-- Pinned versions with subresource integrity: a changed file on the CDN refuses to load. cdnjs has no
+     OrbitControls, so that one comes from jsDelivr at the same version. -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.180.0/three.module.min.js",
+    "three/addons/controls/OrbitControls.js": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/controls/OrbitControls.js"
+  },
+  "integrity": {
+    "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.180.0/three.module.min.js": "sha384-G204cH8yiGRBsIeOd0ayBXn7MSDuf0X5To614xt+2b1ApqNUxAWn/XqL8Xilauyd",
+    "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.180.0/three.core.min.js": "sha384-Aa12tAyxIBJJAFu3qP8FVQCMM0U5JQGdmu9Plhyw4kRdmajEzNw8jChNzDqgEu9x",
+    "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/controls/OrbitControls.js": "sha384-tLl9+KfQJPCciIc85xSuJobNxPRrzSLDNrDFvDDTKE7fA9XvUq4UImkENfnQRUvW"
+  }
+}
+</script>
+</head>
+<body>
+<div id="panel">
+  <h1 id="title"></h1>
+  <dl id="info"></dl>
+  <div class="legend"><span class="key" style="--c:#ffffff">drone</span><span class="key" style="--c:#ff8c1a">person</span></div>
+  <div id="heights"><div id="bar"></div><div class="ticks"><span id="zlo"></span><span>height</span><span id="zhi"></span></div></div>
+  <div class="toggles">
+    <label id="l-points"><input type="checkbox" id="t-points" checked> points</label>
+    <label><input type="checkbox" id="t-drone" checked> drone</label>
+    <label><input type="checkbox" id="t-person" checked> person</label>
+    <label><input type="checkbox" id="t-spin" checked> rotate</label>
+  </div>
+</div>
+<div id="hint">drag to orbit · scroll to zoom · right-drag to pan</div>
+<div id="fail" hidden></div>
+<script type="application/json" id="map-data">/*MAP_DATA*/</script>
+<script>
+  // Module scripts run before "load"; if three.js never arrived (offline, blocked), say so instead of a black page.
+  addEventListener('load', () => {
+    if (window.mapReady) return;
+    const fail = document.getElementById('fail');
+    fail.hidden = false;
+    fail.textContent = "Couldn't load three.js from the CDN (offline?). map.mp4 next to this file shows the same map as a video.";
+  });
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+window.mapReady = true;
+// The colors are already sRGB (same as map.mp4); without this three.js treats them as linear and washes them out.
+THREE.ColorManagement.enabled = false;
+const $ = (id) => document.getElementById(id);
+const data = JSON.parse($('map-data').textContent);
+
+// Panel text goes in through textContent only: nothing from the data ever becomes markup.
+$('title').textContent = data.title;
+for (const [k, v] of data.info) {
+  const dt = document.createElement('dt');
+  dt.textContent = k;
+  const dd = document.createElement('dd');
+  dd.textContent = v;
+  $('info').append(dt, dd);
+}
+$('bar').style.background = `linear-gradient(to right, ${data.turbo.join(', ')})`;
+$('zlo').textContent = `${data.zrange[0].toFixed(1)} m`;
+$('zhi').textContent = `${data.zrange[1].toFixed(1)} m`;
+
+const decode = (b64, Type) => new Type(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer);
+const positions = decode(data.points, Float32Array);
+const colors = decode(data.colors, Uint8Array);
+if (positions.length === 0) {
+  $('heights').hidden = true;
+  $('l-points').hidden = true;
+}
+
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+} catch (err) {
+  $('fail').hidden = false;
+  $('fail').textContent = 'This map needs WebGL, which is off in this browser. map.mp4 next to this file shows the same map as a video.';
+  throw err;
+}
+renderer.outputColorSpace = THREE.LinearSRGBColorSpace;  // pass colors through untouched
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x05070b);
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const center = new THREE.Vector3(...data.view.center);
+const radius = data.view.radius;
+// The map is z-up metres; keep it that way rather than converting to three.js's usual y-up.
+// 40 degrees vertical is about the 60 degrees horizontal map.mp4 uses, so both frame the map alike.
+const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.05, radius * 50);
+camera.up.set(0, 0, 1);
+const dist = 1.15 * radius / Math.tan(Math.PI / 6);
+const elev = 32 * Math.PI / 180;
+// Start behind the takeoff point looking along +y, like map.mp4.
+camera.position.copy(center).add(new THREE.Vector3(0, -Math.cos(elev) * dist, Math.sin(elev) * dist));
+
+const step = radius < 15 ? 1 : 5;
+const span = Math.ceil(radius * 1.4 / step) * step;
+const grid = new THREE.GridHelper(2 * span, 2 * span / step, 0x2a3442, 0x161c25);
+grid.rotation.x = Math.PI / 2;  // GridHelper lies in x-z; the ground here is x-y
+grid.position.set(center.x, center.y, 0);
+scene.add(grid);
+
+const cloud = new THREE.BufferGeometry();
+cloud.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+cloud.setAttribute('color', new THREE.BufferAttribute(colors, 3, true));
+const points = new THREE.Points(cloud, new THREE.PointsMaterial({
+  size: Math.min(0.25, Math.max(0.02, radius / 140)), vertexColors: true, sizeAttenuation: true,
+}));
+scene.add(points);
+
+function path(xyz, color) {
+  const group = new THREE.Group();
+  if (xyz.length === 0) return group;
+  const pts = xyz.map((p) => new THREE.Vector3(...p));
+  group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color })));
+  const end = new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.05, radius / 120), 16, 12),
+    new THREE.MeshBasicMaterial({ color }));
+  end.position.copy(pts[pts.length - 1]);  // where it ended up
+  group.add(end);
+  return group;
+}
+const drone = path(data.drone, 0xffffff);
+const person = path(data.person, 0xff8c1a);
+scene.add(drone, person);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.copy(center);
+controls.enableDamping = true;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.8;
+controls.addEventListener('start', () => {  // the user took over: stop spinning under them
+  controls.autoRotate = false;
+  $('t-spin').checked = false;
+});
+controls.update();
+
+$('t-points').addEventListener('change', (e) => { points.visible = e.target.checked; });
+$('t-drone').addEventListener('change', (e) => { drone.visible = e.target.checked; });
+$('t-person').addEventListener('change', (e) => { person.visible = e.target.checked; });
+$('t-spin').addEventListener('change', (e) => { controls.autoRotate = e.target.checked; });
+
+addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+renderer.setAnimationLoop(() => {
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>

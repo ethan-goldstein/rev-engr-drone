@@ -1,0 +1,7 @@
+# Only for the SfM path (python -m mapping.reconstruct flights/<run>/); --from-track and the tests don't need it.
+#   uv pip install --python .venv/bin/python -r mapping/requirements.txt
+# 4.2.1 ships a CPython 3.12 macOS arm64 wheel (pycolmap-4.2.1-cp312-cp312-macosx_14_0_arm64.whl,
+# sha256 1cacb57103909bb0adec666b06122add8ea8024682d83fc5903145e01297f243). Its only runtime dependency is
+# numpy (already pinned in ../requirements.txt); don't install the [panorama] extra, it pulls in
+# opencv-python-headless, which fights the opencv-contrib-python we already have.
+pycolmap==4.2.1

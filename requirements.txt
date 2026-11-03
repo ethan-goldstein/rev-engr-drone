@@ -1,0 +1,8 @@
+# Python 3.12 (MediaPipe wheels lag newer Pythons). Install with:
+#   uv venv --python 3.12 .venv && uv pip install -r requirements.txt
+mediapipe==1.2.0
+opencv-contrib-python==5.0.0.93  # mediapipe depends on contrib; don't also install opencv-python
+numpy==2.5.4
+pytest==9.2.0
+# optional, only for --driver tello:
+# djitellopy

@@ -1,0 +1,36 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# Flight recordings, replays, maps and rendered videos: large, and they show people and places
+flights/
+video/reels/
+*.mp4
+*.mov
+*.MOV
+*.m4a
+*.aiff
+
+# Downloaded models (curl commands with SHA-256 in README.md)
+assets/*.task
+assets/*.tflite
+
+# Test photos: MediaPipe's samples (download command in README.md) and a frame of a real flight
+tests/images/
+
+# Per-person and per-drone settings
+profile.json
+trim.json
+arena.json
+
+# Reverse-engineering captures: untrusted, never committed (see README.md)
+re/
+
+# Local env files, if any ever appear
+.env
+.env.*

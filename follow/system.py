@@ -96,7 +96,7 @@ class FollowSystem:
         if climbing:
             return "still climbing: press F again in a second"
         self.active = True
-        if self.tracker.lock_center(*self._frame_size, now):
+        if self.tracker.lock_center(*self._frame_size, now, self._lock_min_h()):
             return f"follow on: locked #{self.tracker.target_label}"
         return "follow on: looking for a person (stand in front of the drone)"
 
@@ -136,7 +136,7 @@ class FollowSystem:
             self.stop()
             return FollowOutput(ZERO, land=True, state=LockState.LOCKED, target=label, note="arms up: landing")
         if tr.target is None:
-            tr.lock_center(*self._frame_size, now)
+            tr.lock_center(*self._frame_size, now, self._lock_min_h())
         if tr.target is not None and self._locked_at is None:
             self._locked_at = now
         state = tr.state
@@ -213,8 +213,13 @@ class FollowSystem:
         chips = [("FOLLOW ON" if self.active else "FOLLOW OFF: PRESS F", (80, 220, 80) if self.active else (150, 150, 150))]
         if self.active:
             chips.append((tr.state.value.upper(), STATE_COLORS[tr.state]))
+            if tr.state is LockState.SEARCH:
+                chips.append(("STAND IN FRONT, 4-6 M AWAY", STATE_COLORS[LockState.SEARCH]))
             if self.search_dir:
                 chips.append(("SEARCHING " + ("RIGHT" if self.search_dir > 0 else "LEFT"), STATE_COLORS[LockState.LOST]))
+            warning = self.view_warning()
+            if warning:
+                chips.append((warning, STATE_COLORS[LockState.COASTING]))
             if self.cutoff_in is not None:
                 chips.append((f"MOTORS OFF IN {self.cutoff_in:.1f}s", STATE_COLORS[LockState.LOST]))
             if self.arms_up is not None and self.arms_up.progress > 0:
@@ -224,6 +229,21 @@ class FollowSystem:
             x = _chip(img, text, (x, 18), color) + 6
         return img
 
+
+    def _lock_min_h(self) -> float:
+        """Box height of a person at max_distance: anyone smaller is too far off to be locked onto.
+        On 3 Nov, F pressed before the pilot stepped in front locked a jogger about 16 m away instead."""
+        return self.controller.focal(self._frame_size[0]) * self.cfg.person_height / self.cfg.max_distance
+
+    def view_warning(self) -> str | None:
+        """The locked person's head is out of the top of the frame. If the box is short, the camera is aimed
+        too low (on 3 Nov it had been knocked down and saw only legs); if it fills the frame, they're too close."""
+        tr = self.tracker
+        if not self.active or tr.state is not LockState.LOCKED or tr.target.last_det.y0 > 2:
+            return None
+        if tr.target.last_det.h >= 0.8 * self._frame_size[1]:
+            return "TOO CLOSE: STEP BACK"
+        return "HEAD OUT OF VIEW: TILT CAMERA UP"
 
     def _live_rows(self) -> list[tuple[str, str]]:
         tr = self.tracker

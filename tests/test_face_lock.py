@@ -88,3 +88,15 @@ def test_lock_timer_counts_from_the_lock():
     assert rows["TRACK"] == f"#{rig.follow.tracker.target_label}" and rows["LOCKED"] == "00:02"
     rig.follow.stop()
     assert rig.follow.face is None and rig.follow._locked_at is None
+
+
+def test_warns_when_only_the_legs_are_in_view():
+    from follow.types import Detection
+
+    rig = rig_with_card()
+    assert rig.follow.view_warning() is None  # whole body in view
+    target = rig.follow.tracker.target
+    target.last_det = Detection(300, 0, 340, 140)  # cut off at the top, short: camera aimed at the ground
+    assert rig.follow.view_warning() == "HEAD OUT OF VIEW: TILT CAMERA UP"
+    target.last_det = Detection(250, 0, 390, 330)  # cut off and filling the frame: just too close
+    assert rig.follow.view_warning() == "TOO CLOSE: STEP BACK"

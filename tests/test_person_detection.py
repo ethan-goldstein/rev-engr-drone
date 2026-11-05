@@ -62,3 +62,32 @@ def test_arms_up_must_be_held():
     assert fired.count(True) == 1 and fired.index(True) == 23  # 1.5 s at 15 fps
     state["up"] = False
     assert not cmd.update(frame, box, 2.1) and cmd.progress == 0
+
+
+def test_pose_box_covers_the_body_with_room_for_the_head():
+    from follow.detector import pose_box
+
+    lm = [(0.5, 0.3 + 0.4 * i / 32, 0.9) for i in range(33)]  # nose at y=0.3 down to heels at y=0.7
+    box = pose_box(lm, 640, 360)
+    assert box is not None and box.y0 < 0.3 * 360 and box.y1 >= 0.7 * 360
+    assert pose_box([(0.5, 0.5, 0.1)] * 33, 640, 360) is None  # nothing visible enough
+
+
+def test_pose_box_only_added_when_the_detector_missed_that_person():
+    from follow.detector import merge
+
+    seen = Detection(100, 50, 160, 300)
+    assert merge([seen], Detection(102, 48, 158, 302)) == [seen]  # same person: keep one box
+    other = Detection(400, 60, 450, 280)
+    assert merge([seen], other) == [seen, other]
+    assert merge([], other) == [other]  # the detector missed them entirely
+    assert merge([seen], None) == [seen]
+
+
+@pytest.mark.skipif(not PERSON_MODEL.exists() or not POSE_MODEL.exists(), reason="models missing")
+def test_follow_detector_runs_on_an_empty_frame():
+    from follow.detector import FollowDetector
+
+    det = FollowDetector()
+    assert det.detect(np.full((360, 640, 3), 90, np.uint8), 0.0) == []
+    det.close()

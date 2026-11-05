@@ -183,6 +183,10 @@ Notes:
 
 The drone locks onto a person in **its own camera** and follows them, like a security drone. A Kalman
 filter keeps the lock through short gaps and re-locks on the same person by clothing color.
+People are found by MediaPipe's object detector plus its pose tracker, which carries one person from frame
+to frame. On the first real follow flight (3 Nov, walking with the laptop), the object detector alone kept
+the lock 8% of the time. With the pose tracker and the tracker fixes, the same footage keeps it 84%.
+The speed cap (`--authority`, 0.35) makes the drone slower than a normal walk, so walk slowly.
 The drone view gets the lock box ("LOCKED #1 · 4.1 m") and live graphs of distance, yaw and pitch.
 
 **Practice in the sim:** a simulated person walks around in front of a simulated F19 camera.

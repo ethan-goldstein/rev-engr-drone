@@ -5,9 +5,10 @@ telemetry graphs) next to the 3D map of the flight, with the paths drawn as the 
     python -m mapping.reel --all      every recorded flight that doesn't have a reel yet, plus index.md
 
 Per run:
-1. Replay: follow mode runs offline over raw.mp4, as if F had been pressed at the start, into
-   <run>/replay/ in the recorder's format. Night footage is brightened first so there's something to see.
-   An existing replay is reused.
+1. Live or replay. If follow mode was really on during the flight, the reel shows what the drone actually
+   saw and did (LIVE, from the recording itself, via <run>/live/). Otherwise follow mode runs offline over
+   raw.mp4, as if F had been pressed at the start, into <run>/replay/ (REPLAY). --replay forces a replay
+   too, written as <run>_replay.mp4. Night footage is brightened first. An existing replay is reused.
 2. Map: COLMAP SfM on the replay, which has the lock boxes the scale comes from. Also writes
    <run>/replay/map.html. If COLMAP can't register the footage (dark, or the drone sat still), the map
    panel says so.
@@ -24,6 +25,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from urllib.parse import quote
 from pathlib import Path
 
 import cv2
@@ -46,6 +48,7 @@ from mapping.render import (
 
 ROOT = Path(__file__).resolve().parent.parent
 PANEL = (640, 510)  # the drone view (640x360) with the telemetry strip under it
+MIN_POINTS = 50  # fewer than this isn't a map, just a few stray matches
 LOST_RESET_S = 3.0  # in a replay, let go of someone gone this long so the next person can be locked
 _clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
 
@@ -75,9 +78,25 @@ def footage_brightness(video: Path, samples: int = 30) -> float:
     return float(np.median(vals)) if vals else 0.0
 
 
+def followed_live(run: Path) -> bool:
+    with open(run / "track.csv") as f:
+        return any(r["state"] != "OFF" for r in csv.DictReader(f))
+
+
+def live(run: Path) -> Path:
+    """The flight's own recording, as a folder the map and compose steps can use like a replay."""
+    out = run / "live"
+    out.mkdir(exist_ok=True)
+    for name in ("raw.mp4", "overlay.mp4", "frames.csv", "track.csv"):
+        link = out / name
+        if not link.exists():
+            link.symlink_to(Path("..") / name)
+    return out
+
+
 def replay(run: Path) -> tuple[Path, bool]:
     """Follow mode over the recording -> <run>/replay/. Returns (folder, night)."""
-    from follow.detector import PersonDetector
+    from follow.detector import FollowDetector
     from follow.pose_command import ArmsUpCommand, MediaPipePose
     from follow.profile import load_profile
     from follow.recorder import Recorder
@@ -93,7 +112,7 @@ def replay(run: Path) -> tuple[Path, bool]:
         shutil.rmtree(out)  # a replay that was cut off: only ever this script's own output
     profile_file = ROOT / "profile.json"
     profile = load_profile(profile_file) if profile_file.exists() else []
-    fs = FollowSystem(PersonDetector(), arms_up=ArmsUpCommand(MediaPipePose()), profile=profile, lost_off_s=1e9)
+    fs = FollowSystem(FollowDetector(), arms_up=ArmsUpCommand(MediaPipePose()), profile=profile, lost_off_s=1e9)
     rec = Recorder(out, 0.0)
     cap = cv2.VideoCapture(str(run / "raw.mp4"))
     locked = 0
@@ -236,7 +255,7 @@ def _label(img, text, org, color, scale) -> None:
     cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, color, 1, cv2.LINE_AA)
 
 
-def compose(run: Path, folder: Path, data: MapData | None, reason: str, out: Path) -> None:
+def compose(run: Path, folder: Path, data: MapData | None, reason: str, out: Path, mode: str = "REPLAY") -> None:
     times = frame_times(folder)
     duration = times[-1] - times[0] if len(times) > 1 else 1.0
     fps = max(1.0, (len(times) - 1) / duration) if duration > 0 else 10.0
@@ -251,7 +270,7 @@ def compose(run: Path, folder: Path, data: MapData | None, reason: str, out: Pat
             if not ok:
                 break
             left = cv2.resize(left, PANEL)
-            stamp = f"{run.name.upper()}  //  T+{t:05.1f}s"
+            stamp = f"{run.name.upper()}  //  {mode}  //  T+{t:05.1f}s"
             (tw, _), _ = cv2.getTextSize(stamp, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
             _label(left, stamp, (PANEL[0] - tw - 10, 20), (230, 230, 230), 0.45)
             writer.write(np.hstack([left, panel.draw(t) if panel else still]))
@@ -277,22 +296,39 @@ def write_index(flights: Path, reels: Path) -> Path:
     """index.md in the reels folder: one line per reel, from what's already on disk (no reprocessing)."""
     lines = ["# Flight reels", "",
              "Each video: the drone camera with the follow replay (left) and the 3D map of the flight (right).", "",
-             "| Reel | Recorded | Length | Light | Face/body locked | 3D map |", "|---|---|---|---|---|---|"]
+             "LIVE = follow mode was really on in that flight; REPLAY = follow mode run afterwards on the footage.", "",
+             "| Reel | Recorded | Length | Light | Follow | Locked on | 3D map |", "|---|---|---|---|---|---|---|"]
     for run in sorted((r for r in flights.iterdir() if (reels / f"{r.name}.mp4").exists()), key=run_order):
-        folder = run / "replay"
+        folder = run / "live" if (run / "live").exists() else run / "replay"
         times = frame_times(folder) if (folder / "frames.csv").exists() else [0.0]
         light = footage_brightness(run / "raw.mp4")
-        done = (folder / ".done").read_text().strip() if (folder / ".done").exists() else ""
-        locked = int(done.split(":")[-1]) if done else 0
+        with open(folder / "track.csv") as f:
+            locked = sum(r["state"] == "LOCKED" for r in csv.DictReader(f))
+        mode = "LIVE" if folder.name == "live" else "REPLAY"
+        if (reels / f"{run.name}_replay.mp4").exists():
+            mode += f" ([replay]({run.name}_replay.mp4))"
         found, data = load_map(folder / "map.npz")
-        if data is not None:
+        if data is not None and len(data.points) >= MIN_POINTS:
             info = dict(data.info)
             mapped = f"{info.get('points', '?')} points, {info.get('keyframes', '')}"
         else:
             mapped = "none (too dark)" if light < DARK else ("none" if found else "not built")
         lines.append(f"| [{run.name}.mp4]({run.name}.mp4) | {recorded_at(run)} | {times[-1] - times[0]:.0f} s | "
-                     f"{'night' if light < DARK else 'day'} ({light:.0f}/255) | {locked / max(len(times), 1):.0%} "
+                     f"{'night' if light < DARK else 'day'} ({light:.0f}/255) | {mode} | {locked / max(len(times), 1):.0%} "
                      f"of frames | {mapped} |")
+    recordings = reels / "screen recordings"
+    movies = sorted(recordings.glob("*.[mM][oO][vV]"), key=lambda f: os.stat(f).st_mtime) if recordings.is_dir() else []
+    if movies:
+        lines += ["", "## Screen recordings", "", "The laptop's screen (and phone) during the flights: webcam, hand tracking, drone view.", "",
+                  "| File | Recorded | Length |", "|---|---|---|"]
+        for f in movies:
+            probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(f)],
+                                   capture_output=True, text=True)
+            seconds = float(probe.stdout.strip() or 0)
+            st = os.stat(f)
+            when = time.strftime("%b %-d, %-I:%M %p", time.localtime(getattr(st, "st_birthtime", st.st_mtime)))
+            link = "screen%20recordings/" + quote(f.name)  # macOS puts a narrow no-break space before "PM"
+            lines.append(f"| [{f.name}]({link}) | {when} | {int(seconds // 60)}:{int(seconds % 60):02d} |")
     out = reels / "index.md"
     out.write_text("\n".join(lines) + "\n")
     return out
@@ -305,6 +341,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--force", action="store_true", help="with --all: remake reels that already exist")
     p.add_argument("--out", type=Path, default=ROOT / "video" / "reels")
     p.add_argument("--no-map", action="store_true", help="skip COLMAP (faster); the map panel says so")
+    p.add_argument("--replay", action="store_true",
+                   help="for flights where follow was on: also replay them with today's tracker, as <run>_replay.mp4")
     p.add_argument("--windows", type=float, nargs="+", default=[1 / 3, 0.5],
                    help="keyframe spacings to try for COLMAP, in seconds")
     args = p.parse_args(argv)
@@ -320,16 +358,29 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{run}: no video, skipped")
             continue
         print(f"{run}:")
-        folder, night = replay(run)
-        data, reason = None, "skipped (--no-map)"
-        if not args.no_map:
-            data = build_map(folder, args.windows)
-            reason = ("too dark to map:\nthe drone camera saw almost nothing" if night
-                      else "COLMAP couldn't map this flight:\nthe drone barely moved, or the view was blurred")
-        compose(run, folder, data, reason, args.out / f"{run.name}.mp4")
+        jobs = []
+        if followed_live(run):
+            jobs.append((live(run), footage_brightness(run / "raw.mp4") < DARK, "LIVE", f"{run.name}.mp4"))
+            if args.replay:
+                jobs.append((*replay(run), "REPLAY", f"{run.name}_replay.mp4"))
+        else:
+            jobs.append((*replay(run), "REPLAY", f"{run.name}.mp4"))
+        for folder, night, mode, name in jobs:
+            make_one(run, folder, night, mode, args.out / name, args)
     if flights.is_dir() and args.out.is_dir():
         print(f"index: {write_index(flights, args.out)}")
     return 0
+
+
+def make_one(run: Path, folder: Path, night: bool, mode: str, out: Path, args: argparse.Namespace) -> None:
+    data, reason = None, "skipped (--no-map)"
+    if not args.no_map:
+        data = build_map(folder, args.windows)
+        if data is not None and len(data.points) < MIN_POINTS:
+            data = None
+        reason = ("too dark to map:\nthe drone camera saw almost nothing" if night
+                  else "COLMAP couldn't map this flight:\nthe drone barely moved, or the view was blurred")
+    compose(run, folder, data, reason, out, mode)
 
 
 if __name__ == "__main__":

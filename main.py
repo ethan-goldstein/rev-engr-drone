@@ -169,10 +169,10 @@ def make_follow(args: argparse.Namespace, driver: Driver) -> tuple[FollowSystem 
         scene = SimScene(driver, [SimPerson(args.sim_person, args.sim_person_speed)])
         arms = ArmsUpCommand(sim_pose(scene.people[0]))
         return FollowSystem(SimDetector(scene), cfg, arms_up=arms, profile=profile), scene
-    from follow.detector import PersonDetector
+    from follow.detector import FollowDetector
     from follow.pose_command import MediaPipePose
 
-    return FollowSystem(PersonDetector(), cfg, arms_up=ArmsUpCommand(MediaPipePose()), profile=profile), None
+    return FollowSystem(FollowDetector(), cfg, arms_up=ArmsUpCommand(MediaPipePose()), profile=profile), None
 
 
 def land_and_stop(governor: Governor, driver: Driver, clock=time.monotonic, sleep=time.sleep) -> None:

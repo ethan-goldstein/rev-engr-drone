@@ -173,3 +173,18 @@ def test_arms_up_lands():
     rig.run(0.6)
     assert rig.gov.state is FlightState.LANDING and not rig.follow.active
 
+
+
+def test_wont_lock_onto_someone_far_away():
+    jogger = SimPerson(speed=0.0, start=(1.0, 14.0), pause_s=1000.0)  # crossing far off when F is pressed
+    rig = FollowRig(people=[jogger])
+    apply(rig.sim, rig.gov.takeoff(rig.clock()))
+    rig.run(3.0)
+    msg = rig.follow.toggle(rig.clock(), True, False)
+    assert "looking for a person" in msg
+    rig.run(2.0)
+    assert rig.follow.tracker.target is None  # still searching, not locked on the jogger
+    jogger.waypoints, jogger.speed = [(0.0, 5.0)], 2.0  # the pilot walks up in front
+    jogger._goal = (0.0, 5.0)
+    rig.run(6.0)
+    assert rig.follow.tracker.target is not None
